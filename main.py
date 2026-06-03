@@ -124,7 +124,7 @@ class App(tk.Tk):
 
         #Place textboxes for details of possible datasets
         #Make combobox of effective stress
-        ttk.Label(self, text="p' [kPa]").grid(column=0, row = 0)
+        ttk.Label(self, text="p' [kPa]").grid(column=0, row = 0, rowspan=2)
         nlist = self.pe_list.tolist()
         nlist.append("Any")
         self.pe_cbox = ttk.Combobox(self, values = nlist, state = "readonly") #np.append(self.pe_list, -1)
@@ -194,6 +194,7 @@ class App(tk.Tk):
         #----------------------------------------------------Main button----------------------------------------------
         #-------------------------------------------------------------------------------------------------------------
         #Button to plot signals
+        # TODO check if this component is deprecated
         self.button_plotsig = ttk.Button(self, text = "Get Data", command = self.Plot_all_signals)
         self.button_plotsig.grid(column = 9,  row = 2)
 
@@ -332,6 +333,12 @@ class App(tk.Tk):
         # else:
         #     self.sel_data = self.data[(self.data.pflev==int(selpf))&(self.data.pelev==int(selpe))].copy(deep=True)
         #look at one file for array sizes
+
+        # Regereate figures to ensure figures sizes are correct
+        self.px = 1/plt.rcParams['figure.dpi']  # pixel in inches
+        self.Make_figmain()
+        self.Make_figfreq()
+        self.Make_figzoom()
 
         #Filter data according to stage number instead of pe/pf
         stage = self.stage_cbox.get()
@@ -770,6 +777,8 @@ class App(tk.Tk):
             self.freq_rangeP = [100, 100e3] #acceptable frequency range for P waves
             self.freq_rangeS = [100, 100e3] #acceptable frequency range for S waves
             self.min_frange = 50e3 #default width of filtering bandpass
+            self.ee_timeP_entry.state(["disabled"])
+            self.ee_timeS_entry.state(["disabled"])
 
     def Update_pe_choice(self, event):
         selpe = self.pe_cbox.get()
@@ -874,7 +883,7 @@ class App(tk.Tk):
     #Make multiplot
     def Make_figmain(self):
         sns.set_style("white")
-        self.figmain, self.ax = plt.subplots(1,1, figsize=(6/10*self.window_width*self.px, 5/10*self.window_height*self.px), tight_layout=True)
+        self.figmain, self.ax = plt.subplots(1,1, figsize=(6/10*self.window_width*self.px, 10/20*self.window_height*self.px), tight_layout=True)
         # create FigureCanvasTkAgg object
         self.figmain_canvas = FigureCanvasTkAgg(self.figmain, self)
         # create the toolbar
@@ -886,12 +895,12 @@ class App(tk.Tk):
         self.ax.set_ylabel("Time")
         self.ax.set_xlabel("Frequency [kHz]")
         self.figmain_canvas.draw()
-        self.figmain_canvas.get_tk_widget().grid(column = 0, row = 1, columnspan=6, rowspan=10, sticky="W")
+        self.figmain_canvas.get_tk_widget().grid(column = 0, row = 1, columnspan=6, rowspan=10, sticky="NW")
 
     def Make_figfreq(self):
         #Make Freqplot
         sns.set_style("white")
-        self.figfreq, self.axf = plt.subplots(1, 1, sharex=True, figsize=(3/10*self.window_width*self.px, 5/10*self.window_height*self.px), tight_layout=True)
+        self.figfreq, self.axf = plt.subplots(1, 1, sharex=True, figsize=(3/10*self.window_width*self.px, 10/20*self.window_height*self.px), tight_layout=True)
         # create FigureCanvasTkAgg object
         self.figfreq_canvas = FigureCanvasTkAgg(self.figfreq, self)
         #Plotting
@@ -901,7 +910,7 @@ class App(tk.Tk):
         # self.axf[0].set_ylabel("Vp [m/s]")
         self.axf.set_xlabel("Frequency [kHz]")
         self.figfreq_canvas.draw()
-        self.figfreq_canvas.get_tk_widget().grid(column = 6, row = 1, columnspan=3, rowspan=10, sticky = "W")
+        self.figfreq_canvas.get_tk_widget().grid(column = 6, row = 1, columnspan=3, rowspan=10, sticky = "NW")
     
     def Make_figzoom(self):
         #Make zoomed plot
@@ -951,7 +960,7 @@ class App(tk.Tk):
             self.axz2d =self.axz2.twinx() 
             self.axz2d.axes.yaxis.set_ticklabels([])
         self.figzoom_canvas.draw()
-        self.figzoom_canvas.get_tk_widget().grid(column = 0, row = 11, columnspan=9, rowspan=9, sticky = "W")
+        self.figzoom_canvas.get_tk_widget().grid(column = 0, row = 11, columnspan=9, rowspan=9, sticky = "NW")
         plt.connect('button_press_event', self.Onclick)
 
     def Plot_manual(self):
