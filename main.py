@@ -37,7 +37,7 @@ class App(tk.Tk):
         plt.ioff() #to switch OFF the interactive mode
 
         self.vratio = 9/10
-        self.hratio = 1 # 9/10
+        self.hratio = 9/10
         self.screen_width = self.winfo_screenwidth()
         self.screen_height = self.winfo_screenheight()
         self.window_width = int(self.screen_width*self.hratio)
@@ -46,6 +46,7 @@ class App(tk.Tk):
         self.center_x = int(self.screen_width/2 - self.window_width / 2)
         self.center_y = int(self.screen_height/2 - self.window_height / 2)
         self.geometry(f'{self.window_width}x{self.window_height}+{self.center_x}+{self.center_y}')
+        self.ymin_textline = 100 # minimum nb of vertical pixels to keep for top line
 
         #Set folder location and data df
         self.folder = filedialog.askdirectory(initialdir = "C:\\Users\\gfloo\\Documents\\Professionnel\\PhD\\8_Experimental\\Exp_results\\Hostun_HN31\\HN31_ID60_P_1", title = "Select folder containing bender element files")
@@ -124,7 +125,7 @@ class App(tk.Tk):
 
         #Place textboxes for details of possible datasets
         #Make combobox of effective stress
-        ttk.Label(self, text="p' [kPa]").grid(column=0, row = 0, rowspan=2)
+        ttk.Label(self, text="p' [kPa]").grid(column=0, row = 0)
         nlist = self.pe_list.tolist()
         nlist.append("Any")
         self.pe_cbox = ttk.Combobox(self, values = nlist, state = "readonly") #np.append(self.pe_list, -1)
@@ -312,11 +313,31 @@ class App(tk.Tk):
             self.center_y = int(self.screen_height/2 - self.window_height / 2)
             self.geometry(f'{self.window_width}x{self.window_height}+{self.center_x}+{self.center_y}')
 
-            #replot figure
-            # self.px = 1/plt.rcParams['figure.dpi']  # pixel in inches
-            # self.Make_figmain()
-            # self.Make_figfreq()
-            # self.Make_figzoom()
+            # Adjust figures using a reserved top area so controls stay visible
+            available_vspace = max(self.window_height - self.ymin_textline, 0)
+
+            main_w_px = int(self.window_width * 0.60)
+            main_h_px = int(available_vspace * 0.60)
+            freq_w_px = int(self.window_width * 0.35)
+            freq_h_px = int(available_vspace * 0.60)
+            zoom_w_px = int(self.window_width * 0.95)
+            zoom_h_px = int(available_vspace * 0.4)
+
+            self.figmain.set_size_inches(main_w_px * self.px, main_h_px * self.px, forward=True)
+            self.figmain.tight_layout()
+            self.figmain_canvas.get_tk_widget().configure(width=main_w_px, height=main_h_px)
+            self.figmain_canvas.draw()
+
+            self.figfreq.set_size_inches(freq_w_px * self.px, freq_h_px * self.px, forward=True)
+            self.figfreq.tight_layout()
+            self.figfreq_canvas.get_tk_widget().configure(width=freq_w_px, height=freq_h_px)
+            self.figfreq_canvas.draw()
+
+            self.figzoom.set_size_inches(zoom_w_px * self.px, zoom_h_px * self.px, forward=True)
+            self.figzoom.tight_layout()
+            self.figzoom_canvas.get_tk_widget().configure(width=zoom_w_px, height=zoom_h_px)
+            self.figzoom_canvas.draw()
+
             self.first_change_time = datetime.now()
 
     #Function for buuilding array and plotting 
@@ -895,7 +916,7 @@ class App(tk.Tk):
         self.ax.set_ylabel("Time")
         self.ax.set_xlabel("Frequency [kHz]")
         self.figmain_canvas.draw()
-        self.figmain_canvas.get_tk_widget().grid(column = 0, row = 1, columnspan=6, rowspan=10, sticky="NW")
+        self.figmain_canvas.get_tk_widget().grid(column = 0, row = 1, columnspan=6, rowspan=10, sticky="SE")
 
     def Make_figfreq(self):
         #Make Freqplot
@@ -910,14 +931,14 @@ class App(tk.Tk):
         # self.axf[0].set_ylabel("Vp [m/s]")
         self.axf.set_xlabel("Frequency [kHz]")
         self.figfreq_canvas.draw()
-        self.figfreq_canvas.get_tk_widget().grid(column = 6, row = 1, columnspan=3, rowspan=10, sticky = "NW")
+        self.figfreq_canvas.get_tk_widget().grid(column = 6, row = 1, columnspan=3, rowspan=10, sticky = "SE")
     
     def Make_figzoom(self):
         #Make zoomed plot
         sns.set_style("white") #("ticks")#, {"ytick.left":False, "ytick.right":False})
         #plt.tick_params(left = False, right=False)
         if self.method in ["", "None", "Filter", "Show CC"]:
-            self.figzoom, self.axz = plt.subplots(2,1, sharex = True, figsize=(9/10*self.window_width*self.px, 4/10*self.window_height*self.px), tight_layout=True)
+            self.figzoom, self.axz = plt.subplots(2,1, sharex = True, figsize=(9/10*self.window_width*self.px, 9/20*self.window_height*self.px), tight_layout=True)
             # create FigureCanvasTkAgg object
             self.figzoom_canvas = FigureCanvasTkAgg(self.figzoom, self)
             #Plotting
@@ -960,7 +981,7 @@ class App(tk.Tk):
             self.axz2d =self.axz2.twinx() 
             self.axz2d.axes.yaxis.set_ticklabels([])
         self.figzoom_canvas.draw()
-        self.figzoom_canvas.get_tk_widget().grid(column = 0, row = 11, columnspan=9, rowspan=9, sticky = "NW")
+        self.figzoom_canvas.get_tk_widget().grid(column = 0, row = 11, columnspan=9, rowspan=9, sticky = "NE")
         plt.connect('button_press_event', self.Onclick)
 
     def Plot_manual(self):
