@@ -159,7 +159,7 @@ class App(tk.Tk):
 
         # Configure event : window size change
         self.first_change_time = datetime.now() #time at which window was changed
-        self.configure_time = np.timedelta64(5, 's')
+        self.configure_time = np.timedelta64(1, 's')
         self.bind("<Configure>", self.On_window_resize)
 
         #make sure exit "x" actually closes software, not just window
