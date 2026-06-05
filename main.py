@@ -176,6 +176,9 @@ class App(tk.Tk):
         self.Make_figmain()
         self.Make_figfreq()
         self.Make_figzoom()
+
+        # Resize plots
+        self.Resize_window()
         
         #Check is anything has been plotted
         self.virginmain = True
@@ -313,32 +316,38 @@ class App(tk.Tk):
             self.center_y = int(self.screen_height/2 - self.window_height / 2)
             self.geometry(f'{self.window_width}x{self.window_height}+{self.center_x}+{self.center_y}')
 
-            # Adjust figures using a reserved top area so controls stay visible
-            available_vspace = max(self.window_height - self.ymin_textline, 0)
-
-            main_w_px = int(self.window_width * 0.60)
-            main_h_px = int(available_vspace * 0.60)
-            freq_w_px = int(self.window_width * 0.35)
-            freq_h_px = int(available_vspace * 0.60)
-            zoom_w_px = int(self.window_width * 0.95)
-            zoom_h_px = int(available_vspace * 0.4)
-
-            self.figmain.set_size_inches(main_w_px * self.px, main_h_px * self.px, forward=True)
-            self.figmain.tight_layout()
-            self.figmain_canvas.get_tk_widget().configure(width=main_w_px, height=main_h_px)
-            self.figmain_canvas.draw()
-
-            self.figfreq.set_size_inches(freq_w_px * self.px, freq_h_px * self.px, forward=True)
-            self.figfreq.tight_layout()
-            self.figfreq_canvas.get_tk_widget().configure(width=freq_w_px, height=freq_h_px)
-            self.figfreq_canvas.draw()
-
-            self.figzoom.set_size_inches(zoom_w_px * self.px, zoom_h_px * self.px, forward=True)
-            self.figzoom.tight_layout()
-            self.figzoom_canvas.get_tk_widget().configure(width=zoom_w_px, height=zoom_h_px)
-            self.figzoom_canvas.draw()
+            self.Resize_window()
 
             self.first_change_time = datetime.now()
+
+    def Resize_window(self):
+        """
+        Updates the sizes of the graphs based on available window size
+        """
+        # Adjust figures using a reserved top area so controls stay visible
+        available_vspace = max(self.window_height - self.ymin_textline, 0)
+
+        main_w_px = int(self.window_width * 0.60)
+        main_h_px = int(available_vspace * 0.60)
+        freq_w_px = int(self.window_width * 0.35)
+        freq_h_px = int(available_vspace * 0.60)
+        zoom_w_px = int(self.window_width * 0.95)
+        zoom_h_px = int(available_vspace * 0.4)
+
+        self.figmain.set_size_inches(main_w_px * self.px, main_h_px * self.px, forward=True)
+        self.figmain.tight_layout()
+        self.figmain_canvas.get_tk_widget().configure(width=main_w_px, height=main_h_px)
+        self.figmain_canvas.draw()
+
+        self.figfreq.set_size_inches(freq_w_px * self.px, freq_h_px * self.px, forward=True)
+        self.figfreq.tight_layout()
+        self.figfreq_canvas.get_tk_widget().configure(width=freq_w_px, height=freq_h_px)
+        self.figfreq_canvas.draw()
+
+        self.figzoom.set_size_inches(zoom_w_px * self.px, zoom_h_px * self.px, forward=True)
+        self.figzoom.tight_layout()
+        self.figzoom_canvas.get_tk_widget().configure(width=zoom_w_px, height=zoom_h_px)
+        self.figzoom_canvas.draw()
 
     #Function for buuilding array and plotting 
     def Plot_all_signals(self): #, canvas, ax, data, sel_pe, sel_pf, folder):
@@ -900,11 +909,11 @@ class App(tk.Tk):
     #-------------------------------------------------------------------------------------------------------------
     #----------------------------------------------------Make Plots----------------------------------------------
     #-------------------------------------------------------------------------------------------------------------
-
+    
     #Make multiplot
     def Make_figmain(self):
         sns.set_style("white")
-        self.figmain, self.ax = plt.subplots(1,1, figsize=(6/10*self.window_width*self.px, 10/20*self.window_height*self.px), tight_layout=True)
+        self.figmain, self.ax = plt.subplots(1,1, figsize=(0.6*self.window_width*self.px, 0.6*self.window_height*self.px), tight_layout=True)
         # create FigureCanvasTkAgg object
         self.figmain_canvas = FigureCanvasTkAgg(self.figmain, self)
         # create the toolbar
@@ -921,7 +930,7 @@ class App(tk.Tk):
     def Make_figfreq(self):
         #Make Freqplot
         sns.set_style("white")
-        self.figfreq, self.axf = plt.subplots(1, 1, sharex=True, figsize=(3/10*self.window_width*self.px, 10/20*self.window_height*self.px), tight_layout=True)
+        self.figfreq, self.axf = plt.subplots(1, 1, sharex=True, figsize=(0.35*self.window_width*self.px, 0.6*self.window_height*self.px), tight_layout=True)
         # create FigureCanvasTkAgg object
         self.figfreq_canvas = FigureCanvasTkAgg(self.figfreq, self)
         #Plotting
@@ -938,7 +947,7 @@ class App(tk.Tk):
         sns.set_style("white") #("ticks")#, {"ytick.left":False, "ytick.right":False})
         #plt.tick_params(left = False, right=False)
         if self.method in ["", "None", "Filter", "Show CC"]:
-            self.figzoom, self.axz = plt.subplots(2,1, sharex = True, figsize=(9/10*self.window_width*self.px, 9/20*self.window_height*self.px), tight_layout=True)
+            self.figzoom, self.axz = plt.subplots(2,1, sharex = True, figsize=(0.95*self.window_width*self.px, 0.4*self.window_height*self.px), tight_layout=True)
             # create FigureCanvasTkAgg object
             self.figzoom_canvas = FigureCanvasTkAgg(self.figzoom, self)
             #Plotting
