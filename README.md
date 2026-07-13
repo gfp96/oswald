@@ -20,7 +20,9 @@ Oswald requires two separate inputs:
 - 1 file per recording containing the rough data
 
 ### Input database
-
+The input database must have a specific column names to ensure the filtering tools function correctly. Oswald is currently unable to manage duplicate entries in this database. Only the first entry will be kept.
+Necessary data columns:
+- 
 
 
 
