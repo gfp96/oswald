@@ -9,7 +9,12 @@ import matplotlib.pyplot as plt
 import os
 from datetime import datetime
 import pandas.errors  # for errors
-from signal_interp import Find_start
+try:
+    # Package import used by `python -m oswald.qt_app`.
+    from .signal_interp import Find_start
+except ImportError:
+    # Script import retained for the existing Tkinter application.
+    from signal_interp import Find_start
 
 def browseFiles():
     filename = filedialog.askopenfilename(initialdir = "/",

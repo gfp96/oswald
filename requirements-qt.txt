@@ -1,0 +1,4 @@
+# Qt frontend dependencies. Install with the same interpreter used to launch
+# Oswald, for example: python -m pip install -r requirements-qt.txt
+PySide6==6.7.3
+pyqtgraph==0.14.0
