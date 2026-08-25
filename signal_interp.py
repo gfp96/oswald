@@ -1,5 +1,4 @@
-from tracemalloc import start
-from scipy.signal import butter, sosfiltfilt, find_peaks
+from scipy.signal import butter, sosfiltfilt
 import numpy as np
 import pandas as pd
 
@@ -10,6 +9,47 @@ import pandas as pd
 
 def AIC(k, N, input_signal):  # compares variance right and left of index k :  signal "input_signal" and length of signal= N
     return (k+1)*np.log(np.nanvar(input_signal[0:k]))+(N-k-2)*np.log(np.nanvar(input_signal[k+1:N-1]))
+
+
+def _aic_curve(input_signal):
+    """Return the AIC value for every split point without Python-level loops."""
+    signal = np.asarray(input_signal, dtype=float)
+    N = signal.size
+    curve = np.full(N + 1, np.nan, dtype=float)
+    if N < 3:
+        return curve
+
+    finite = np.isfinite(signal)
+    values = np.where(finite, signal, 0.0)
+    counts = np.cumsum(finite, dtype=float)
+    sums = np.cumsum(values)
+    sums_sq = np.cumsum(values * values)
+
+    split_indices = np.arange(1, N - 1)
+    left_count = counts[split_indices - 1]
+    left_sum = sums[split_indices - 1]
+    left_sum_sq = sums_sq[split_indices - 1]
+    right_count = counts[N - 2] - counts[split_indices]
+    right_sum = sums[N - 2] - sums[split_indices]
+    right_sum_sq = sums_sq[N - 2] - sums_sq[split_indices]
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        left_variance = left_sum_sq / left_count - (left_sum / left_count) ** 2
+        right_variance = right_sum_sq / right_count - (right_sum / right_count) ** 2
+        # The scalar AIC function uses k + 1 for the left-hand weight, even
+        # though its slice contains samples up to (but excluding) k.
+        left_variance[left_count <= 1] = 0.0
+        right_variance[right_count <= 1] = 0.0
+        curve[split_indices] = (split_indices + 1) * np.log(left_variance)
+        curve[split_indices] += (N - split_indices - 2) * np.log(right_variance)
+    return curve
+
+
+def _moving_mean(signal, window):
+    """Calculate centered moving means for the valid portion of a signal."""
+    if window <= 0:
+        raise ValueError("window must be positive")
+    return np.convolve(signal, np.ones(window, dtype=float) / window, mode="valid")
 
 # def AIC_matrix(k, N, input_signal):  # compares variance right and left of index k :  signal "input_signal" and length of signal= N
 #     return (k+1)*np.log(np.nanvar(input_signal[:, 0:k], axis=1))+(N-k-2)*np.log(np.nanvar(input_signal[:, k+1:N-1], axis = 1))
@@ -117,8 +157,7 @@ def Get_Max_AIC_velocity(times, s_inds, rough, propagation_distance, input_freqs
         aici = np.zeros(N+1, dtype = float)
         #Calculate AIC and velocity
         if N>0 : #valid signal
-            for k in np.arange(N+1, dtype = int): #this loop is compulsory as k cannot be an array
-                aici[k] = AIC(k, N, signal[start_aics[i]:max_inds[i]])
+            aici = _aic_curve(signal[start_aics[i]:max_inds[i]])
             #Arrival 
             a_inds[i] = start_aics[i]+np.argmin(np.ma.masked_invalid(aici)) 
             aics[i] = aici #store in bigger array
@@ -218,8 +257,8 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
         stalta = np.zeros_like(times[i])
         lta = np.mean(char_func)
 
-        for k, cf in enumerate(char_func[Ns2:Nl-Ns2]):
-            stalta[k+Ns2] = np.mean(char_func[k:k+2*Ns2+1])#np.mean(char_func[k-Ns2:k+Ns2+1])
+        moving_mean = _moving_mean(char_func, 2 * Ns2 + 1)
+        stalta[Ns2:Nl-Ns2] = moving_mean
         stalta/=lta
 
         ind_max_vel = int(s_inds[i] + propagation_distance/max_vel/dt)
@@ -254,8 +293,7 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
         aic1 = np.zeros(N, dtype = float)
         #Calculate AIC and velocity
         if N>0 : #valid signal
-            for k in np.arange(N, dtype = int): #this loop is compulsory as k cannot be an array
-                aic1[k] = AIC(k, N, signal[saic1_inds[i]:eaic1_inds[i]])
+            aic1 = _aic_curve(signal[saic1_inds[i]:eaic1_inds[i]])[:-1]
             #Arrival 
             a1_inds[i] = saic1_inds[i]+np.argmin(np.ma.masked_invalid(aic1)) 
         else:
@@ -268,8 +306,7 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
         aic2 = np.zeros(N, dtype = float)
         #Calculate AIC and velocity
         if N>0 : #valid signal
-            for k in np.arange(N, dtype = int): #this loop is compulsory as k cannot be an array
-                aic2[k] = AIC(k, N, signal[saic2_inds[i]:eaic2_inds[i]])
+            aic2 = _aic_curve(signal[saic2_inds[i]:eaic2_inds[i]])[:-1]
             #Arrival 
             a2_inds[i] = saic2_inds[i]+np.argmin(np.ma.masked_invalid(aic2)) 
         else:
