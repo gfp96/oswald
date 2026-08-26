@@ -40,6 +40,27 @@ except ImportError:
     )
 
 
+def format_frequency(frequency_hz):
+    """Format a Hertz value using the most readable engineering unit."""
+    frequency_hz = float(frequency_hz)
+    if frequency_hz < 1_000:
+        return f"{frequency_hz:g} Hz"
+    if frequency_hz < 1_000_000:
+        return f"{frequency_hz / 1_000:g} kHz"
+    if frequency_hz < 1_000_000_000:
+        return f"{frequency_hz / 1_000_000:g} MHz"
+    return f"{frequency_hz / 1_000_000_000:g} GHz"
+
+
+class FrequencyAxis(pg.AxisItem):
+    """Display raw Hertz tick positions with compact engineering units."""
+
+    def tickStrings(self, values, scale, spacing):
+        # Keep X values in Hertz internally while formatting each tick for
+        # readability when frequencies cross engineering-unit boundaries.
+        return [format_frequency(value) for value in values]
+
+
 @dataclass
 class LoadedSignals:
     """Signals and their time vectors aligned with one dataframe selection."""
@@ -47,6 +68,26 @@ class LoadedSignals:
     times: list[np.ndarray]
     inputs: list[np.ndarray]
     outputs: list[np.ndarray]
+    # Start indices are calculated at load time so manual picking is available
+    # even when no automated interpretation method has been selected.
+    starts: np.ndarray | None = None
+
+
+def calculate_start_indices(times, inputs, selection, data_format, periods):
+    """Find the initial arrival estimate used by manual and automatic picking."""
+    starts = np.zeros(len(times), dtype=int)
+    for index, signal in enumerate(inputs):
+        if data_format == "Terratek":
+            # Terratek has no separate input trace, so use the known reference
+            # encap-to-encap travel time for the wave type.
+            dt = times[index][1] - times[index][0]
+            travel_time = 4.6e-6 if selection.isvp.iloc[index] else 7.1e-6
+            starts[index] = int(round(travel_time / dt))
+        elif selection.Burst.iloc[index]:
+            starts[index] = Find_start_burst(signal, periods)
+        else:
+            starts[index] = Find_start(signal)
+    return starts
 
 
 class AnalysisWorker(QtCore.QObject):
@@ -109,7 +150,10 @@ class AnalysisWorker(QtCore.QObject):
                     inputs.append(np.array([], dtype=float))
                     outputs.append(np.asarray(output_signal, dtype=float))
             # `loaded` is Signal(object), therefore this must be one argument.
-            self.loaded.emit(LoadedSignals(times, inputs, outputs))
+            starts = calculate_start_indices(
+                times, inputs, self.selection, self.data_format, 21
+            )
+            self.loaded.emit(LoadedSignals(times, inputs, outputs, starts))
         except Exception as error:
             self.failed.emit(f"Could not load signals: {error}")
         finally:
@@ -121,20 +165,11 @@ class AnalysisWorker(QtCore.QObject):
         try:
             times = signals.times
             rough = signals.outputs
-            starts = np.zeros(len(rough), dtype=int)
-            for index, signal in enumerate(signals.inputs):
-                # Estimate the beginning of the useful receiving signal before
-                # filtering or AIC.  This is the same distinction as in main.py:
-                # Terratek uses a reference travel time, bursts use their period
-                # count, and ordinary BE signals use extrema in the input trace.
-                if self.data_format == "Terratek":
-                    dt = times[index][1] - times[index][0]
-                    travel_time = 4.6e-6 if self.selection.isvp.iloc[index] else 7.1e-6
-                    starts[index] = int(round(travel_time / dt))
-                elif self.selection.Burst.iloc[index]:
-                    starts[index] = Find_start_burst(signal, periods)
-                else:
-                    starts[index] = Find_start(signal)
+            # Recalculate with the current burst-period setting when an
+            # automated method is run; loading used the default 21 periods.
+            starts = calculate_start_indices(
+                times, signals.inputs, self.selection, self.data_format, periods
+            )
 
             # Filter/Show CC only produce cleaned traces.  The AIC methods also
             # return arrival indices and velocities for the velocity panel.
@@ -248,7 +283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frequency = self._combo([])
         self.frequency.setEnabled(False)
         self.frequency.currentIndexChanged.connect(self._frequency_changed)
-        controls.addRow("Frequency [kHz]", self.frequency)
+        controls.addRow("Frequency", self.frequency)
         self.length = QtWidgets.QDoubleSpinBox()
         self.length.setRange(1e-6, 10.0)
         self.length.setValue(0.193)
@@ -290,7 +325,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         pg.setConfigOptions(background="#101820", foreground="#e8edf2", antialias=True)
         self.main_plot = pg.PlotWidget(title="Stage waveform overview")
-        self.velocity_plot = pg.PlotWidget(title="Velocity by frequency")
+        self.velocity_plot = pg.PlotWidget(
+            title="Velocity by frequency",
+            axisItems={"bottom": FrequencyAxis(orientation="bottom")},
+        )
         self.detail = pg.GraphicsLayoutWidget()
         self.p_plot = self.detail.addPlot(row=0, col=0, title="Compression wave (left click)")
         self.s_plot = self.detail.addPlot(row=1, col=0, title="Shear wave (right click)")
@@ -464,14 +502,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filtered = None
         self.analysis = None
         self.analysis_curves = None
-        self.starts = None
+        # Loading normally provides starts. Recompute them defensively for a
+        # legacy or synthetic payload so Method=None remains pickable.
+        self.starts = signals.starts
+        if self.starts is None:
+            self.starts = calculate_start_indices(
+                signals.times, signals.inputs, self.selection,
+                self.format.currentText(), self.periods.value(),
+            )
         self.current_index = 0
         self.last_clicked_wave = None
         self.last_clicked_row = None
         self.pending_grades = {}
         self.frequency.blockSignals(True)
         self.frequency.clear()
-        self.frequency.addItems(str(value) for value in sorted(self.selection.freqlev.unique()))
+        self.frequency_values = sorted(self.selection.freqlev.unique())
+        self.frequency.addItems(format_frequency(value) for value in self.frequency_values)
         self.frequency.setEnabled(True)
         self.frequency.blockSignals(False)
         self._draw_overview()
@@ -542,7 +588,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if frequency not in labelled_frequencies:
                 # Frequency labels are presentation values; integer kHz is
                 # easier to scan and avoids distracting decimal noise.
-                label = pg.TextItem(f"{int(round(frequency))} kHz", color="#e8edf2", anchor=(0.5, 1.0))
+                label = pg.TextItem(format_frequency(frequency), color="#e8edf2", anchor=(0.5, 1.0))
                 # The inverted time axis places this text below the signal.
                 label.setPos(centre, float(np.nanmax(time) * 1000))
                 self.main_plot.addItem(label)
@@ -606,7 +652,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # SI prefix. This prevents the axis formatter from presenting values
         # as km/s when the stored values are metres per second.
         self.velocity_plot.setLabel("left", "Velocity [m/s]")
-        self.velocity_plot.setLabel("bottom", "Frequency", units="kHz")
+        # Tick text supplies Hz/kHz/MHz/GHz per value, so no single unit is
+        # attached to the axis label.
+        self.velocity_plot.setLabel("bottom", "Frequency")
         self.velocity_plot.setYRange(0, 2000, padding=0)
 
     def _overview_clicked(self, event):
@@ -617,8 +665,9 @@ class MainWindow(QtWidgets.QMainWindow):
         centres = np.asarray(getattr(self, "overview_centres", []))
         if centres.size:
             row_index = int(np.argmin(np.abs(centres - position.x())))
-            frequency = str(self.selection.freqlev.iloc[row_index])
-            self.frequency.setCurrentText(frequency)
+            frequency = float(self.selection.freqlev.iloc[row_index])
+            frequency_index = int(np.argmin(np.abs(np.asarray(self.frequency_values) - frequency)))
+            self.frequency.setCurrentIndex(frequency_index)
 
     def _frequency_changed(self, index):
         """Render the frequency selected in the combo box."""
@@ -635,13 +684,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.signals is None or self.selection.empty:
             return
         index = max(0, min(index, self.frequency.count() - 1))
-        frequency = float(self.frequency.itemText(index))
+        frequency = self.frequency_values[index]
         self.current_index = index
         self.p_plot.clear()
         self.s_plot.clear()
         self.detail_output_curves = {}
         self.detail_row_indices = {}
-        self.detail_views = getattr(self, "detail_views", {})
         for plot, isvp in ((self.p_plot, True), (self.s_plot, False)):
             # One frequency can have two rows, one P and one S.  Locate each
             # independently so both subplots compare the same frequency.
@@ -668,40 +716,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             signal = np.where(finite_signal, signal, 0.0)
             input_signal = self.signals.inputs[row_index]
+            # The receiving trace determines the analysis result, but the
+            # input trace can be much larger when Method=None is selected.
+            # Normalize both display copies independently so neither one can
+            # force the other outside the visible detail-pane range.
+            output_amplitude = np.nanmax(np.abs(signal)) or 1.0
+            display_signal = signal / output_amplitude
             if input_signal.size:
-                # The input and received signals can differ by orders of
-                # magnitude.  Overlay the input in a linked ViewBox so its
-                # right-hand scale is independent of the output scale.
-                input_view = self.detail_views.get(plot)
-                if input_view is None:
-                    input_view = pg.ViewBox()
-                    self.detail_views[plot] = input_view
-                    plot.scene().addItem(input_view)
-                    plot.getAxis("right").linkToView(input_view)
-                    input_view.setXLink(plot)
-                    plot.vb.sigResized.connect(
-                        lambda view=input_view, source=plot: view.setGeometry(source.vb.sceneBoundingRect())
-                    )
-                # A ViewBox added directly to the scene has no automatic
-                # layout geometry. Without this assignment its data can be
-                # painted at the scene origin, outside the plotting area.
-                input_view.setGeometry(plot.vb.sceneBoundingRect())
-                input_view.clear()
-                input_view.addItem(pg.PlotDataItem(
-                    time[:input_signal.size], input_signal,
-                    # The input has its own ViewBox and scale, but uses the
-                    # same solid P/S color as the receiving trace.
-                    pen=pg.mkPen("#55c2ff" if isvp else "#f2b134", width=1.0),
-                ))
-                input_view.setYRange(float(np.nanmin(input_signal)), float(np.nanmax(input_signal)), padding=0.1)
-                # The plot is laid out after this method can run during window
-                # construction, so repeat the geometry update once Qt has
-                # completed the layout pass.
-                QtCore.QTimer.singleShot(
-                    0, lambda view=input_view, source=plot: view.setGeometry(source.vb.sceneBoundingRect())
-                )
+                input_amplitude = np.nanmax(np.abs(input_signal)) or 1.0
+                input_count = min(time.size, input_signal.size)
+                display_input = input_signal[:input_count] / input_amplitude
+                plot.plot(time[:input_count], display_input,
+                          pen=pg.mkPen("#a7b0b8", width=1.0))
             output_curve = plot.plot(
-                time, signal,
+                time, display_signal,
                 pen=pg.mkPen("#55c2ff" if isvp else "#f2b134", width=1.6),
                 antialias=True,
             )
@@ -709,18 +737,16 @@ class MainWindow(QtWidgets.QMainWindow):
             # Explicit ranges make the receiving trace visible even though
             # the detail axes are intentionally hidden for a clean view.
             plot.setXRange(float(np.nanmin(time)), float(np.nanmax(time)), padding=0.02)
-            output_min = float(np.nanmin(signal))
-            output_max = float(np.nanmax(signal))
-            if output_min == output_max:
-                output_min -= 1.0
-                output_max += 1.0
-            plot.setYRange(output_min, output_max, padding=0.1)
+            # Both normalized traces are bounded by [-1, 1]. Use a fixed
+            # margin so the input remains visible even when the receiving
+            # signal is nearly constant, which is common in Method=None.
+            plot.setYRange(-1.1, 1.1, padding=0)
             if self.starts is not None and self.starts[row_index] < len(time):
                 plot.addLine(x=time[self.starts[row_index]],
                              pen=pg.mkPen("#e8edf2", style=QtCore.Qt.PenStyle.DashLine))
             for column, color in (("arrival_manual", "#ec6a5e"),
-                                  ("arrival_aicmax", "#55c2ff"),
-                                  ("arrival_SLA", "#f2b134")):
+                                  ("arrival_aicmax", "#7d62ea"),
+                                  ("arrival_SLA", "#2d7126")):
                 if pd.notna(row[column]):
                     plot.addLine(x=float(row[column]) * 1000, pen=pg.mkPen(color, width=2))
             pending_grade = self.pending_grades.get(row.filename)
@@ -740,7 +766,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # as metadata for accessibility and future export views.
             plot.setLabel("left", "Amplitude")
             plot.setLabel("bottom", "Time", units="ms")
-            plot.setTitle(f"{'P' if isvp else 'S'} wave | {row.freqlev:g} kHz | left click to pick")
+            plot.setTitle(f"{'P' if isvp else 'S'} wave | {format_frequency(row.freqlev)} | left click to pick")
 
     def _detail_clicked(self, event, forced_isvp=None):
         """Store a left-click P or S arrival and its velocity."""

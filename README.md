@@ -39,6 +39,45 @@ The input database must have a specific column names to ensure the filtering too
 Necessary data columns:
 - 
 
+### Keyboard bindings
+
+The following keyboard bindings are available in the graphical interfaces:
+
+| Binding | Action |
+| --- | --- |
+| `0` to `5` | Assigns the corresponding quality grade to the currently selected signal. In the Qt interface, the grade is kept locally until **Save results** is pressed. |
+| `Tab` | Moves to the next frequency in the signal list in the Tkinter interface and, when focus permits, in the Qt interface. |
+| `Ctrl` + `Right Arrow` | Moves to the next frequency in the Qt interface, including when focus is in another control. |
+| Left mouse button on the P-wave detail plot | Selects the compression-wave arrival, calculates its Start-to-Start velocity, and stores the manual pick. |
+| Left mouse button on the S-wave detail plot | Selects the shear-wave arrival, calculates its Start-to-Start velocity, and stores the manual pick. |
+
+Manual arrivals and grades can be reviewed in the detail and velocity plots. Use
+**Save results** to write the current results back to the experimental database.
+
+### Code structure
+
+The project is currently organized as a small source-tree application:
+
+- `main.py` contains the original Tkinter GUI, including controls, Matplotlib
+	figures, manual picking, grading, filtering, and saving.
+- `qt_app.py` contains the PySide6/pyqtgraph interface. It provides the newer
+	visual layer, background workers for file loading and analysis, interactive
+	waveform plots, velocity plots, and manual picking.
+- `signal_interp.py` contains the signal-processing algorithms: start
+	detection, filtering, Max-AIC interpretation, STA/LTA-AIC interpretation,
+	and numerical helper functions.
+- `Functions.py` contains shared file readers, dataframe helpers, plotting
+	defaults, and compatibility utilities used by the GUI layers.
+- `tests/` contains automated tests for the signal-processing functions and
+	edge cases.
+- `requirements-qt.txt` lists the PySide6 and pyqtgraph dependencies required
+	by the newer interface.
+- `__init__.py` makes the source directory importable as the `oswald` package.
+
+The intended long-term architecture is to keep `signal_interp.py` and the I/O
+helpers independent of the GUI, allowing the Tkinter frontend to remain
+available while the Qt frontend and package API mature.
+
 
 
 ## References

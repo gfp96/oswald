@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import oswald.signal_interp as signal_interp
 
 # Import through the package name used by the future pip distribution.
 # `conftest.py` makes the current source tree discoverable when pytest is
@@ -12,6 +13,44 @@ from oswald.signal_interp import (
     _aic_curve,
     _moving_mean,
 )
+from oswald.signal_interp import _stalta_end_index
+
+
+def test_stalta_end_uses_record_end_when_threshold_never_recrosses():
+    # This is the stage-72 failure mode: STALTA stays above one after the
+    # first detected signal, so there is no empty-sequence reduction.
+    stalta = np.array([0.2, 0.5, 1.2, 1.4, 1.1])
+
+    assert _stalta_end_index(stalta, 2) == len(stalta) - 1
+
+
+def test_stalta_velocity_handles_signal_without_threshold_recrossing(monkeypatch):
+    """The complete STALTA routine must tolerate a permanently high STALTA."""
+    sample_interval = 1e-4
+    times = [np.arange(1000, dtype=float) * sample_interval]
+    signal = np.sin(2 * np.pi * 1000 * times[0])
+    input_freqs = pd.Series([1000.0])
+
+    # Keep this test focused on the empty-threshold-crossing bug rather than
+    # depending on the exact filter response of a particular SciPy release.
+    monkeypatch.setattr(signal_interp, "sosfiltfilt", lambda sos, values: values)
+    monkeypatch.setattr(
+        signal_interp,
+        "_moving_mean",
+        lambda values, window: np.full(values.size - window + 1, 2.0),
+    )
+
+    result = signal_interp.Get_STALTA_AIC_velocity(
+        times,
+        np.array([0]),
+        [signal],
+        0.193,
+        input_freqs,
+        freq_range=np.array([100.0, 2000.0]),
+        max_vel=2000,
+    )
+
+    assert result[0].shape[0] == 1
 
 
 def test_find_start_uses_midpoint_before_extrema():

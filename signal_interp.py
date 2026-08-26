@@ -51,6 +51,22 @@ def _moving_mean(signal, window):
         raise ValueError("window must be positive")
     return np.convolve(signal, np.ones(window, dtype=float) / window, mode="valid")
 
+
+def _first_finite_argmin(values):
+    """Return the index of the smallest finite value, or None if unavailable."""
+    finite_indices = np.flatnonzero(np.isfinite(values))
+    if finite_indices.size == 0:
+        return None
+    return int(finite_indices[np.argmin(values[finite_indices])])
+
+
+def _stalta_end_index(stalta, start_index):
+    """Find the first post-arrival return below one, or use record end."""
+    below_threshold = np.flatnonzero(stalta[start_index:] <= 1)
+    if below_threshold.size:
+        return int(below_threshold[0] + start_index)
+    return len(stalta) - 1
+
 # def AIC_matrix(k, N, input_signal):  # compares variance right and left of index k :  signal "input_signal" and length of signal= N
 #     return (k+1)*np.log(np.nanvar(input_signal[:, 0:k], axis=1))+(N-k-2)*np.log(np.nanvar(input_signal[:, k+1:N-1], axis = 1))
 
@@ -159,7 +175,12 @@ def Get_Max_AIC_velocity(times, s_inds, rough, propagation_distance, input_freqs
         if N>0 : #valid signal
             aici = _aic_curve(signal[start_aics[i]:max_inds[i]])
             #Arrival 
-            a_inds[i] = start_aics[i]+np.argmin(np.ma.masked_invalid(aici)) 
+            local_arrival = _first_finite_argmin(aici)
+            if local_arrival is None:
+                valids[i] = False
+                a_inds[i] = start_aics[i]
+            else:
+                a_inds[i] = start_aics[i] + local_arrival
             aics[i] = aici #store in bigger array
         else:
             a_inds[i] = start_aics[i]+N #bugged signal
@@ -235,6 +256,9 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
         fft_inds = np.where(np.all([freqs<freq_range[1], freqs>freq_range[0]], axis = 0))
         freqs = freqs[fft_inds]
         fourier = np.abs(fourier[fft_inds])
+        if freqs.size == 0:
+            valids[i] = False
+            continue
         freq_ind = np.argmax(fourier)
         fpeaks[i] = freqs[freq_ind]
 
@@ -278,7 +302,10 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
             continue #bugged
         
         eaic1_inds[i] = is_signal[0]
-        eaic2_inds[i] = np.nanmin(np.where((stalta[eaic1_inds[i]:]<=1)))+eaic1_inds[i]
+        # A noisy or slowly decaying record may never cross back below one.
+        # In that case the valid AIC window ends at the final sample rather
+        # than asking nanmin() to reduce an empty array.
+        eaic2_inds[i] = _stalta_end_index(stalta, eaic1_inds[i])
         #end_aic = times[eaic_ind]
 
         #Choose start point for aic according to quality of grounding and signal : if electric current 
@@ -295,7 +322,12 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
         if N>0 : #valid signal
             aic1 = _aic_curve(signal[saic1_inds[i]:eaic1_inds[i]])[:-1]
             #Arrival 
-            a1_inds[i] = saic1_inds[i]+np.argmin(np.ma.masked_invalid(aic1)) 
+            local_arrival = _first_finite_argmin(aic1)
+            if local_arrival is None:
+                valids[i] = False
+                a1_inds[i] = saic1_inds[i]
+            else:
+                a1_inds[i] = saic1_inds[i] + local_arrival
         else:
             a1_inds[i] = saic1_inds[i]+N #bugged signal
             valid=False
@@ -308,7 +340,12 @@ def Get_STALTA_AIC_velocity(times, s_inds, rough, propagation_distance, input_fr
         if N>0 : #valid signal
             aic2 = _aic_curve(signal[saic2_inds[i]:eaic2_inds[i]])[:-1]
             #Arrival 
-            a2_inds[i] = saic2_inds[i]+np.argmin(np.ma.masked_invalid(aic2)) 
+            local_arrival = _first_finite_argmin(aic2)
+            if local_arrival is None:
+                valids[i] = False
+                a2_inds[i] = saic2_inds[i]
+            else:
+                a2_inds[i] = saic2_inds[i] + local_arrival
         else:
             a2_inds[i] = saic2_inds[i]+N #bugged signal
             valid=False
