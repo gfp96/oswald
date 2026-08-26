@@ -17,14 +17,27 @@ import pandas as pd
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .Functions import Read_BE_file, Read_terratek_signal, Update_df
-from .signal_interp import (
-    Find_start,
-    Find_start_burst,
-    Get_Max_AIC_velocity,
-    Get_STALTA_AIC_velocity,
-    Get_filtered_signal,
-)
+try:
+    # Preferred form when launched with `python -m oswald.qt_app`.
+    from .Functions import Read_BE_file, Read_terratek_signal, Update_df
+    from .signal_interp import (
+        Find_start,
+        Find_start_burst,
+        Get_Max_AIC_velocity,
+        Get_STALTA_AIC_velocity,
+        Get_filtered_signal,
+    )
+except ImportError:
+    # Fallback for IDEs that execute this file directly. Module execution is
+    # still recommended because it gives the package a stable import context.
+    from Functions import Read_BE_file, Read_terratek_signal, Update_df
+    from signal_interp import (
+        Find_start,
+        Find_start_burst,
+        Get_Max_AIC_velocity,
+        Get_STALTA_AIC_velocity,
+        Get_filtered_signal,
+    )
 
 
 @dataclass
@@ -163,6 +176,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filtered = None
         self.worker_thread = None
         self.worker = None
+        # These visibility switches affect only the velocity plot; the signal
+        # overview and detail plots always retain both wave types.
+        self.show_p = True
+        self.show_s = True
         self.setWindowTitle("Oswald | Wave propagation analysis")
         self.resize(1500, 950)
         self._load_database()
@@ -220,6 +237,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.method.addItems(["None", "Filter", "Max_AIC", "STA/LTA_AIC", "Show CC"])
         controls.addRow("Method", self.method)
         self.method.currentTextChanged.connect(self._method_changed)
+        self.p_check = QtWidgets.QCheckBox("Compression (P)")
+        self.p_check.setChecked(True)
+        self.p_check.toggled.connect(self._toggle_wave_visibility)
+        controls.addRow(self.p_check)
+        self.s_check = QtWidgets.QCheckBox("Shear (S)")
+        self.s_check.setChecked(True)
+        self.s_check.toggled.connect(self._toggle_wave_visibility)
+        controls.addRow(self.s_check)
         self.frequency = self._combo([])
         self.frequency.setEnabled(False)
         self.frequency.currentIndexChanged.connect(self._frequency_changed)
@@ -256,6 +281,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reset_button = QtWidgets.QPushButton("Reset pressure filters")
         self.reset_button.clicked.connect(self._reset_filters)
         controls.addRow(self.reset_button)
+        self.recentre_button = QtWidgets.QPushButton("Recentre plots")
+        self.recentre_button.clicked.connect(self._recentre_plots)
+        controls.addRow(self.recentre_button)
         self.status = QtWidgets.QLabel("Choose a stage and load its signals")
         self.status.setWordWrap(True)
         controls.addRow(self.status)
@@ -269,11 +297,23 @@ class MainWindow(QtWidgets.QMainWindow):
         for plot in (self.main_plot, self.velocity_plot, self.p_plot, self.s_plot):
             plot.showGrid(x=True, y=True, alpha=0.2)
         self.main_plot.invertY(True)
+        # The detail plots are inspection canvases rather than measurement
+        # plots. Hide their axes and grid so the waveform and pick markers are
+        # not obscured by competing visual elements.
+        for plot in (self.p_plot, self.s_plot):
+            plot.showGrid(x=False, y=False)
+            plot.hideAxis("left")
+            plot.hideAxis("right")
+            plot.hideAxis("bottom")
+            plot.hideAxis("top")
         layout.addWidget(self.main_plot, 0, 1)
         layout.addWidget(self.velocity_plot, 0, 2)
         layout.addWidget(self.detail, 1, 1, 2, 2)
         self.main_plot.scene().sigMouseClicked.connect(self._overview_clicked)
-        self.detail.scene().sigMouseClicked.connect(self._detail_clicked)
+        # Direct connections avoid relying on the parent GraphicsLayoutWidget
+        # to identify which child plot received the mouse event.
+        self.p_plot.scene().sigMouseClicked.connect(lambda event: self._detail_clicked(event, True))
+        self.s_plot.scene().sigMouseClicked.connect(lambda event: self._detail_clicked(event, False))
 
         # A normal Tab press is consumed by child widgets such as combo boxes.
         # This shortcut provides a dependable next-frequency command while
@@ -306,7 +346,9 @@ class MainWindow(QtWidgets.QMainWindow):
         stage = self.stage.currentText()
         if stage != "Any":
             result = result[result.stageno == int(stage)]
-        self.selection = result.copy()
+        # Sorting here also controls the order in which traces are loaded and
+        # displayed, so the overview reads naturally from low to high frequency.
+        self.selection = result.sort_values(["freqlev", "isvp"], ascending=[True, False]).copy()
         self.periods.setEnabled(bool(self.selection.get("Burst", pd.Series(dtype=bool)).any()))
         self.status.setText(f"{len(self.selection)} recordings selected")
 
@@ -351,6 +393,38 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.signals is not None:
             self._analyse()
 
+    def _recentre_plots(self):
+        """Restore the initial view ranges for every plot without reloading."""
+        # The overview and velocity panes can use pyqtgraph's automatic range
+        # calculation. The detail pane is redrawn because it has an explicit
+        # range chosen from the selected signal and its markers.
+        for plot in (self.main_plot, self.velocity_plot):
+            plot.enableAutoRange()
+        if self.signals is not None and self.frequency.count():
+            self._draw_overview()
+            self._draw_velocity()
+            self._draw_detail(self.current_index)
+        self.status.setText("Plots recentered")
+
+    def _toggle_wave_visibility(self):
+        """Redraw only the velocity pane using the selected P/S filters."""
+        self.show_p = self.p_check.isChecked()
+        self.show_s = self.s_check.isChecked()
+        self._draw_velocity()
+
+    def _recentre_plots(self):
+        """Restore the initial automatic ranges without reloading signals."""
+        # Auto-ranging is applied to the overview and velocity panes directly.
+        # Rebuilding the detail pane also restores its initial signal-centered
+        # range and preserves any stored arrival markers.
+        for plot in (self.main_plot, self.velocity_plot):
+            plot.enableAutoRange()
+        if self.signals is not None and self.frequency.count():
+            self._draw_overview()
+            self._draw_velocity()
+            self._draw_detail(self.current_index)
+        self.status.setText("Plots recentered")
+
     def _load_signals(self):
         """Start asynchronous loading so the window remains responsive."""
         self._start_worker("load")
@@ -392,6 +466,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis_curves = None
         self.starts = None
         self.current_index = 0
+        self.last_clicked_wave = None
+        self.last_clicked_row = None
+        self.pending_grades = {}
         self.frequency.blockSignals(True)
         self.frequency.clear()
         self.frequency.addItems(str(value) for value in sorted(self.selection.freqlev.unique()))
@@ -445,63 +522,90 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.signals is None or self.selection.empty:
             return
         signals = self.filtered if self.filtered is not None else self.signals.outputs
-        traces = [signal for signal in signals if signal.size]
-        if not traces:
+        received_traces = [signal for signal in signals if signal.size]
+        if not received_traces:
             return
-        amplitude = max(
-            np.nanmax(np.abs(signal)) for signal in traces
-        ) or 1.0
         self.overview_centres = []
         self.overview_labels = []
         labelled_frequencies = set()
         for index, (time, signal, isvp) in enumerate(zip(self.signals.times, signals, self.selection.isvp)):
             if not signal.size:
                 continue
-            centre = index * 2.4
+            # Each emitted/received pair gets its own amplitude unit. This
+            # means a quiet record is not flattened by a louder record and
+            # each couple fills the same horizontal channel width.
+            centre = index * 2.6
             self.overview_centres.append(centre)
             # TextItem uses plot coordinates, so the label follows the trace
             # when the user zooms or pans instead of being painted on the UI.
             frequency = float(self.selection.freqlev.iloc[index])
             if frequency not in labelled_frequencies:
-                label = pg.TextItem(str(frequency), color="#e8edf2", anchor=(0.5, 1.0))
+                # Frequency labels are presentation values; integer kHz is
+                # easier to scan and avoids distracting decimal noise.
+                label = pg.TextItem(f"{int(round(frequency))} kHz", color="#e8edf2", anchor=(0.5, 1.0))
+                # The inverted time axis places this text below the signal.
                 label.setPos(centre, float(np.nanmax(time) * 1000))
                 self.main_plot.addItem(label)
                 self.overview_labels.append(label)
                 labelled_frequencies.add(frequency)
             pen = pg.mkPen("#55c2ff" if isvp else "#f2b134", width=1.2)
-            # A dashed excitation trace plus a solid receiving trace matches
-            # the two traces shown in the original top-left figure.
+            # The excitation is dotted grey, as in the original GUI.  The
+            # The input is drawn first in dotted grey. The received trace is
+            # drawn second so it remains visible when the two signals overlap.
             input_signal = self.signals.inputs[index]
+            input_amplitude = np.nanmax(np.abs(input_signal)) if input_signal.size else 1.0
+            received_amplitude = np.nanmax(np.abs(signal)) or 1.0
+            input_amplitude = input_amplitude or received_amplitude
             if input_signal.size:
-                self.main_plot.plot(input_signal / amplitude + centre, time[:input_signal.size] * 1000,
-                                    pen=pg.mkPen("#8b949e", style=QtCore.Qt.PenStyle.DashLine))
-            curve = self.main_plot.plot(signal / amplitude + centre, time * 1000, pen=pen)
-            # Keep the original arrays for detail plots, but let pyqtgraph
-            # draw only visible extrema when many samples occupy one pixel.
-            curve.setClipToView(True)
-            curve.setDownsampling(auto=True, method="peak")
+                self.main_plot.plot(input_signal / input_amplitude + centre,
+                                    time[:input_signal.size] * 1000,
+                                    pen=pg.mkPen("#a7b0b8", width=1.0,
+                                                 style=QtCore.Qt.PenStyle.DotLine))
+            # No downsampling is used here: the overview is an inspection
+            # view and should preserve the full waveform resolution. Qt can
+            # still clip data outside the viewport for efficient navigation.
+            self.main_plot.plot(signal / received_amplitude + centre,
+                                time * 1000, pen=pen, antialias=True)
         self.main_plot.setLabel("left", "Time", units="ms")
-        self.main_plot.setLabel("bottom", "Recording channel; P blue, S amber")
+        # Channel offsets are implementation details used to separate traces;
+        # they are not a physical measurement and should not be shown as an
+        # X-axis to the user.
+        self.main_plot.hideAxis("bottom")
 
     def _draw_velocity(self):
         """Show manual and automatic P/S velocities against frequency."""
         self.velocity_plot.clear()
+        # Recreate the legend after clearing the plot; each plotted series
+        # supplies its own descriptive name below (for example, "Manual P").
+        self.velocity_plot.addLegend()
         if self.selection.empty:
             return
-        styles = {"vel_manual": ("#ec6a5e", "Manual", "o"),
-                  "vel_aicmax": ("#55c2ff", "Max AIC", "t"),
-                  "vel_SLA": ("#f2b134", "STA/LTA AIC", "x"),
-                  "vel_CC": ("#a78bfa", "Cross-correlation", "s")}
-        for column, (color, label, symbol) in styles.items():
+        # Color identifies the wave type; marker shape identifies the method.
+        # This stays readable when the P/S visibility checkboxes are toggled.
+        styles = {"vel_manual": ("Manual", "o"),
+              "vel_aicmax": ("Max AIC", "t"),
+              "vel_SLA": ("STA/LTA AIC", "x"),
+              "vel_CC": ("Cross-correlation", "s")}
+        wave_colors = {True: "#55c2ff", False: "#f2b134"}
+        for column, (label, symbol) in styles.items():
             if column not in self.selection:
                 continue
             for isvp, suffix in ((True, " P"), (False, " S")):
+                if isvp and not self.show_p or not isvp and not self.show_s:
+                    continue
                 rows = self.selection[(self.selection.isvp == isvp) & (self.selection[column] > 0)]
                 if not rows.empty:
                     self.velocity_plot.plot(rows.freqlev.to_numpy(), rows[column].to_numpy(),
-                                            pen=None, symbol=symbol, symbolBrush=color,
-                                            symbolPen=color, symbolSize=9, name=label + suffix)
-        self.velocity_plot.setLabel("left", "Velocity", units="m/s")
+                                            pen=None, symbol=symbol,
+                                            symbolBrush=wave_colors[isvp],
+                                            symbolPen=wave_colors[isvp], symbolSize=9,
+                                            name=label + suffix)
+        # The analysis API computes distance in metres divided by time in
+        # seconds, so every stored point is already m/s. Put the unit in the
+        # label text rather than passing it as a pyqtgraph
+        # SI prefix. This prevents the axis formatter from presenting values
+        # as km/s when the stored values are metres per second.
+        self.velocity_plot.setLabel("left", "Velocity [m/s]")
         self.velocity_plot.setLabel("bottom", "Frequency", units="kHz")
         self.velocity_plot.setYRange(0, 2000, padding=0)
 
@@ -535,6 +639,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_index = index
         self.p_plot.clear()
         self.s_plot.clear()
+        self.detail_output_curves = {}
         self.detail_row_indices = {}
         self.detail_views = getattr(self, "detail_views", {})
         for plot, isvp in ((self.p_plot, True), (self.s_plot, False)):
@@ -549,8 +654,19 @@ class MainWindow(QtWidgets.QMainWindow):
             row = matches.iloc[0]
             time = self.signals.times[row_index] * 1000
             signal = self.signals.outputs[row_index]
-            if self.filtered is not None:
-                signal = self.filtered[row_index]
+            # A failed filter/AIC record must not blank the pane. Keep the
+            # original receiving signal as a visible fallback for that row.
+            if self.filtered is not None and row_index < len(self.filtered):
+                candidate = np.asarray(self.filtered[row_index], dtype=float)
+                if candidate.size == signal.size and np.isfinite(candidate).any():
+                    signal = candidate
+            signal = np.asarray(signal, dtype=float)
+            time = time[:signal.size]
+            finite_signal = np.isfinite(signal)
+            if not finite_signal.any():
+                plot.setTitle("No finite signal samples available")
+                continue
+            signal = np.where(finite_signal, signal, 0.0)
             input_signal = self.signals.inputs[row_index]
             if input_signal.size:
                 # The input and received signals can differ by orders of
@@ -561,20 +677,44 @@ class MainWindow(QtWidgets.QMainWindow):
                     input_view = pg.ViewBox()
                     self.detail_views[plot] = input_view
                     plot.scene().addItem(input_view)
-                    plot.showAxis("right")
                     plot.getAxis("right").linkToView(input_view)
                     input_view.setXLink(plot)
                     plot.vb.sigResized.connect(
                         lambda view=input_view, source=plot: view.setGeometry(source.vb.sceneBoundingRect())
                     )
+                # A ViewBox added directly to the scene has no automatic
+                # layout geometry. Without this assignment its data can be
+                # painted at the scene origin, outside the plotting area.
+                input_view.setGeometry(plot.vb.sceneBoundingRect())
                 input_view.clear()
                 input_view.addItem(pg.PlotDataItem(
                     time[:input_signal.size], input_signal,
-                    pen=pg.mkPen("#8b949e", style=QtCore.Qt.PenStyle.DashLine),
+                    # The input has its own ViewBox and scale, but uses the
+                    # same solid P/S color as the receiving trace.
+                    pen=pg.mkPen("#55c2ff" if isvp else "#f2b134", width=1.0),
                 ))
                 input_view.setYRange(float(np.nanmin(input_signal)), float(np.nanmax(input_signal)), padding=0.1)
-                plot.getAxis("right").setLabel("Input amplitude", color="#8b949e")
-            plot.plot(time, signal, pen=pg.mkPen("#55c2ff" if isvp else "#f2b134", width=1.4))
+                # The plot is laid out after this method can run during window
+                # construction, so repeat the geometry update once Qt has
+                # completed the layout pass.
+                QtCore.QTimer.singleShot(
+                    0, lambda view=input_view, source=plot: view.setGeometry(source.vb.sceneBoundingRect())
+                )
+            output_curve = plot.plot(
+                time, signal,
+                pen=pg.mkPen("#55c2ff" if isvp else "#f2b134", width=1.6),
+                antialias=True,
+            )
+            self.detail_output_curves[isvp] = output_curve
+            # Explicit ranges make the receiving trace visible even though
+            # the detail axes are intentionally hidden for a clean view.
+            plot.setXRange(float(np.nanmin(time)), float(np.nanmax(time)), padding=0.02)
+            output_min = float(np.nanmin(signal))
+            output_max = float(np.nanmax(signal))
+            if output_min == output_max:
+                output_min -= 1.0
+                output_max += 1.0
+            plot.setYRange(output_min, output_max, padding=0.1)
             if self.starts is not None and self.starts[row_index] < len(time):
                 plot.addLine(x=time[self.starts[row_index]],
                              pen=pg.mkPen("#e8edf2", style=QtCore.Qt.PenStyle.DashLine))
@@ -583,18 +723,43 @@ class MainWindow(QtWidgets.QMainWindow):
                                   ("arrival_SLA", "#f2b134")):
                 if pd.notna(row[column]):
                     plot.addLine(x=float(row[column]) * 1000, pen=pg.mkPen(color, width=2))
+            pending_grade = self.pending_grades.get(row.filename)
+            grade = pending_grade if pending_grade is not None else row.Grade
+            readout_parts = []
+            if pd.notna(row.arrival_manual) and row.vel_manual > 0:
+                readout_parts.append(f"v = {row.vel_manual:.1f} m/s")
+            if pd.notna(grade) and grade >= 0:
+                readout_parts.append(f"grade = {int(grade)}")
+            if readout_parts:
+                readout = pg.TextItem(" | ".join(readout_parts),
+                                      color="#ec6a5e", anchor=(0, 1))
+                readout.setPos(float(row.arrival_manual) * 1000 if pd.notna(row.arrival_manual) else float(np.nanmin(time)),
+                               float(plot.vb.viewRange()[1][1]))
+                plot.addItem(readout)
+            # Axes remain hidden in the detail pane; these labels are retained
+            # as metadata for accessibility and future export views.
             plot.setLabel("left", "Amplitude")
             plot.setLabel("bottom", "Time", units="ms")
-            plot.setTitle(f"{'P' if isvp else 'S'} wave | {row.freqlev:g} kHz | click to pick")
+            plot.setTitle(f"{'P' if isvp else 'S'} wave | {row.freqlev:g} kHz | left click to pick")
 
-    def _detail_clicked(self, event):
-        """Store a left-click P or right-click S arrival and its velocity."""
+    def _detail_clicked(self, event, forced_isvp=None):
+        """Store a left-click P or S arrival and its velocity."""
         if self.signals is None or self.selection.empty:
             return
         scene_pos = event.scenePos()
-        plot = self.p_plot if self.p_plot.sceneBoundingRect().contains(scene_pos) else self.s_plot
-        isvp = plot is self.p_plot
-        expected_button = QtCore.Qt.MouseButton.LeftButton if isvp else QtCore.Qt.MouseButton.RightButton
+        # Direct child-plot connections pass the wave type explicitly. The
+        # fallback keeps this method usable for synthetic tests and older Qt
+        # event wiring.
+        if forced_isvp is None:
+            isvp = self.p_plot.vb.sceneBoundingRect().contains(scene_pos)
+        else:
+            isvp = forced_isvp
+        plot = self.p_plot if isvp else self.s_plot
+        if not plot.vb.sceneBoundingRect().contains(scene_pos):
+            return
+        # The subplot already identifies the wave type, so the same intuitive
+        # left-click gesture can be used for both compression and shear waves.
+        expected_button = QtCore.Qt.MouseButton.LeftButton
         if event.button() != expected_button:
             return
         row_index = self.detail_row_indices.get(isvp)
@@ -615,12 +780,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # by the manually picked propagation time.
         velocity = self.length.value() / (arrival - start)
         filename = row.filename
+        self.last_clicked_wave = isvp
+        self.last_clicked_row = row_index
         self.data.loc[self.data.filename == filename, ["vel_manual", "arrival_manual"]] = velocity, arrival
         self.selection = self.data.loc[self.selection.index].copy()
         self._draw_velocity()
         self._draw_detail(self.current_index)
         self.save_button.setEnabled(True)
         self.status.setText(f"Manual {'P' if isvp else 'S'} pick: {velocity:.1f} m/s")
+
+    def _grade(self, grade):
+        """Store a grade locally; it reaches the spreadsheet only on Save."""
+        if self.last_clicked_row is None:
+            self.status.setText("Click a P or S trace before assigning a grade")
+            return
+        filename = self.selection.iloc[self.last_clicked_row].filename
+        self.pending_grades[filename] = grade
+        self._draw_detail(self.current_index)
+        self.status.setText(f"Grade {grade} stored locally")
 
     def keyPressEvent(self, event):
         """Advance frequency with Tab and grade the current signal with 0-5."""
@@ -629,13 +806,7 @@ class MainWindow(QtWidgets.QMainWindow):
             event.accept()
             return
         if QtCore.Qt.Key.Key_0 <= event.key() <= QtCore.Qt.Key.Key_5:
-            grade = event.key() - QtCore.Qt.Key.Key_0
-            filename = self.selection.iloc[self.current_index].filename
-            self.data.loc[self.data.filename == filename, "Grade"] = grade
-            if grade == 0:
-                self.data.loc[self.data.filename == filename, "valid"] = False
-            self.selection = self.data.loc[self.selection.index].copy()
-            self.status.setText(f"Grade {grade} stored")
+            self._grade(event.key() - QtCore.Qt.Key.Key_0)
             event.accept()
             return
         super().keyPressEvent(event)
@@ -643,7 +814,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _save(self):
         """Write all current manual and automatic results back to Excel."""
         try:
+            # Apply pending grades only at the explicit save boundary. Manual
+            # and automatic velocities have already been staged in `data`.
+            for filename, grade in self.pending_grades.items():
+                self.data.loc[self.data.filename == filename, "Grade"] = grade
+                if grade == 0:
+                    self.data.loc[self.data.filename == filename, "valid"] = False
             self.data.to_excel(self.datafile, index=False)
+            self.pending_grades.clear()
             self.status.setText(f"Saved results to {self.datafile.name}")
         except Exception as error:
             self._show_error(f"Could not save results: {error}")
