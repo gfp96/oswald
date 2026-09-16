@@ -18,7 +18,7 @@ The newer visual layer can be launched from the workspace root after installing
 the Qt dependencies:
 
 ```ShellSession
-cd 03_lab_management
+cd path/to/cloned/folder
 python -m pip install -r oswald/requirements-qt.txt
 python -m oswald.qt_app
 ```

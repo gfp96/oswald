@@ -286,6 +286,8 @@ class MainWindow(QtWidgets.QMainWindow):
         controls.addRow("Frequency", self.frequency)
         self.length = QtWidgets.QDoubleSpinBox()
         self.length.setRange(1e-6, 10.0)
+        self.length.setDecimals(4)
+        self.length.setSingleStep(0.01)
         self.length.setValue(0.193)
         self.length.setSuffix(" m")
         controls.addRow("BE length", self.length)
