@@ -20,7 +20,7 @@ the Qt dependencies:
 ```ShellSession
 cd path/to/cloned/folder
 python -m pip install -r oswald/requirements-qt.txt
-python -m oswald.qt_app
+python -m qt_app
 ```
 
 This frontend keeps the existing `main.py` Tkinter application available. It
